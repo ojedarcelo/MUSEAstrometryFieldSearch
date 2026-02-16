@@ -63,7 +63,7 @@ python wfm_use_case.py
 
 ```
 
-This performs a grid-based search over the outskirts of astronomical targets, applying density constraints and automatically downloading background images for finding charts. This tool uses a GUI to show how the grid is sliding over the dataset. The outputs of this script are stored in ```wfm_use_case/OUTPUTS```
+This performs a grid-based search over the outskirts of cluster catalogs, applying density constraints and automatically downloading background images for finding charts. This tool uses a GUI to show how the grid is sliding over the dataset. The outputs of this script are stored in ```wfm_use_case/OUTPUTS```
 
 ---
 
