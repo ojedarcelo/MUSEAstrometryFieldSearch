@@ -52,7 +52,7 @@ python nfm_use_case.py
 
 ```
 
-This script iterates through cluster catalogs, identifies reference stars, and filters the surrounding area based on crowding and brightness limits.
+This script iterates through cluster catalogs, identifies reference stars, and filters the surrounding area based on crowding and brightness limits. The outputs of this script are stored in ```nfm_use_case/OUTPUTS```.
 
 ### Wide Field Mode (WFM)
 
@@ -63,7 +63,7 @@ python wfm_use_case.py
 
 ```
 
-This performs a grid-based search over the outskirts of astronomical targets, applying density constraints and automatically downloading background images for finding charts.
+This performs a grid-based search over the outskirts of astronomical targets, applying density constraints and automatically downloading background images for finding charts. This tool uses a GUI to show how the grid is sliding over the dataset. The outputs of this script are stored in ```wfm_use_case/OUTPUTS```
 
 ---
 
