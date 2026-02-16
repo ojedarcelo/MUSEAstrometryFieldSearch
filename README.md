@@ -24,7 +24,7 @@ Astrometric calibration for the MUSE instrument requires specific stellar densit
 
 2. **Install dependencies:**
 ```bash
-pip install numpy pandas matplotlib astropy astroquery
+pip install -r requirements.txt
 
 ```
 
@@ -41,7 +41,7 @@ chmod +x download_use_cases_data.sh
 
 ---
 
-## 🚀 Usage
+## 🚀 Example Usage
 
 ### Narrow Field Mode (NFM)
 
