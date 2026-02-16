@@ -18,7 +18,7 @@ Astrometric calibration for the MUSE instrument requires specific stellar densit
 
 1. **Clone the repository:**
 ```bash
-   git clone [https://github.com/ojedarcelo/MUSEAstrometryFieldSearch.git](https://github.com/ojedarcelo/MUSEAstrometryFieldSearch.git)
+   git clone https://github.com/ojedarcelo/MUSEAstrometryFieldSearch.git
    cd MUSEAstrometryFieldSearch
 ```
 
