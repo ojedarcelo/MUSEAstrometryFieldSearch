@@ -4,7 +4,7 @@ Scripts to search for field candidates from star catalogs to do astrometry calib
 
 ## 🔭 Project Overview
 
-Astrometric calibration for the MUSE instrument requires specific stellar densities and magnitude ranges to ensure an accurate World Coordinate System (WCS) solution. This repository provides two examples of automated workflows to identify these fields using existing catalogs (such as ACS, HSC, or Gaia).
+Astrometric calibration for the MUSE instrument requires specific stellar densities and magnitude ranges to ensure an accurate World Coordinate System (WCS) solution. This repository provides scripts to search for field candidates for NFM and WFM, provided catalogs of stars from nearby globular clusters and associated imaging. We also provide two examples of automated workflows to identify these fields for the two modes using existing catalogs (such as ACS, HSC, or Gaia).
 
 ### Key Features:
 * **Narrow Field Mode (NFM):** Searches for isolated reference stars within a specific magnitude range (typically 11.9–12.9) and verifies a $7.5'' \times 7.5''$ field of view.
