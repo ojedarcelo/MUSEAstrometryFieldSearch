@@ -321,10 +321,12 @@ def get_coords_from_targname(targname):
 
 
 def append_catalog_table_to_pipeline_table(
-    field_csv_file,
+    field_csv_file_path,
     extname,
-    ra_pointing,
-    dec_pointing,
+    ra_pointing_deg,
+    ra_pointing_hms,
+    dec_pointing_deg,
+    dec_pointing_dms,
     catalog_path,
     pipeline_table_fits='MU_GASR_141026A_astrom_cat.fits'
 ):
@@ -338,17 +340,31 @@ def append_catalog_table_to_pipeline_table(
 
     Parameters
     ----------
-    field_csv_file : str
+    field_csv_file_path: str
         Path to the input CSV file containing the field catalog.
+        The catalog must have the following columns:
+            - SourceID (identifier for the object)
+            - RA (in degrees)
+            - DEC (in degrees)
+            - filter (of the magnitude, F555W, F606W, Vvega, ...)
+            - mag (magnitude)
 
     extname : str
         EXTNAME header value for the new FITS extension.
+        Example for WFM: "NGC_1851_f01"
+        Example for NFM: "NGC5986_f028_NFM"
 
-    ra_pointing : float
+    ra_pointing_deg : float
         Field pointing Right Ascension (degrees), stored in header.
 
-    dec_pointing : float
+    ra_pointing_hms : str
+        Field pointing Right Ascension (HMS), stored in header comment.
+
+    dec_pointing_deg : float
         Field pointing Declination (degrees), stored in header.
+
+    dec_pointing_dms : str
+        Field pointing Declination (DMS), stored in header comment.
 
     catalog_path : str
         Path to the original catalog from which the field was extracted.
@@ -365,7 +381,8 @@ def append_catalog_table_to_pipeline_table(
     Notes
     -----
     - Byte-string artifacts (e.g., b'...') are removed from
-      'SourceID' and 'filter' columns before writing.
+      'SourceID' and 'filter' columns before writing, which are
+      present in the catalog outputs from the previous functions.
     - The SourceID column is truncated to 8 characters.
     - A CHECKSUM keyword is added to the new extension.
     """
@@ -380,7 +397,7 @@ def append_catalog_table_to_pipeline_table(
             .str.replace(r"'$", "", regex=True)
         )
 
-    df = pd.read_csv(field_csv_file)
+    df = pd.read_csv(field_csv_file_path)
 
     df["SourceID"] = clean_byte_string(df["SourceID"])
     df["filter"] = clean_byte_string(df["filter"])
@@ -435,8 +452,8 @@ def append_catalog_table_to_pipeline_table(
     hdr = hdu.header
 
     hdr["EXTNAME"] = (extname, "field name")
-    hdr["RA"] = (ra_pointing, "Field RA (deg)")
-    hdr["DEC"] = (dec_pointing, "Field DEC (deg)")
+    hdr["RA"] = (float(ra_pointing_deg), ra_pointing_hms)
+    hdr["DEC"] = (float(dec_pointing_deg), dec_pointing_dms)
     hdr["CATALOG"] = (catalog_path, "Input catalog")
 
     hdu.add_checksum()
