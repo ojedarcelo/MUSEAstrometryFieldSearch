@@ -2,11 +2,13 @@ import os
 import astropy.units as u
 import pandas as pd
 import numpy as np
+import requests
 from astropy.io import fits
 from astropy.coordinates import Angle, SkyCoord
 from astroquery.gaia import Gaia
 from astroquery.mast import Catalogs
 from astropy.coordinates.name_resolve import NameResolveError
+from bs4 import BeautifulSoup
 
 
 # ---- RA tick formatter (degrees → HMS) ----
@@ -318,6 +320,75 @@ def get_coords_from_targname(targname):
     print(f"DEC (deg): {dec_pointing}")
 
     return ra_pointing, dec_pointing
+
+
+def get_staralt_plots(
+    mode,
+    date,
+    observatory,
+    coordinates,
+    min_elevation,
+    out_format='gif',
+    filename='visibility_plot.gif'
+):
+    url = "https://astro.ing.iac.es/staralt/index.php"
+
+    # Mapping modes to the site's numerical values
+    mode_map = {
+        'staralt': '1',
+        'startrack': '2',
+        'starobs': '3',
+        'starmult': '4'
+    }
+
+    year, month, day = date.split('-')
+
+    # UPDATED: Use the exact 'name' attributes from the HTML you provided
+    form_data = {
+        'form[mode]': mode_map.get(mode.lower(), '1'),
+        'form[day]': day,
+        'form[month]': month,
+        'form[year]': year,
+        'form[obs_name]': observatory,  # Needs the full string from the dropdown
+        'form[coordlist]': coordinates,
+        'form[paramdist]': '2',         # Default: Moon distance
+        'form[minangle]': min_elevation,         # Default: 10 degrees
+        'form[format]': out_format,
+        'action': 'showImage',
+        'submit': ' Retrieve '
+    }
+
+    print(f"Submitting request for {mode} at {observatory}...")
+
+    try:
+        # We must use a POST request to index.php
+        response = requests.post(url, data=form_data)
+        response.raise_for_status()
+
+        content_type = response.headers.get("Content-Type", "")
+
+        if "image" in content_type:
+            # The server returned the GIF directly
+            with open(filename, "wb") as f:
+                f.write(response.content)
+            print(f"Success! Image saved as {filename}")
+
+        else:
+            # Fallback: HTML page with <img>
+            soup = BeautifulSoup(response.text, "html.parser")
+            img_tag = soup.find("img", src=lambda s: s and "temp/" in s)
+
+            if img_tag:
+                img_url = "https://astro.ing.iac.es/staralt/" + img_tag["src"]
+                img_data = requests.get(img_url).content
+                with open(filename, "wb") as f:
+                    f.write(img_data)
+                print(f"Success! Image saved as {filename}")
+            else:
+                print("Could not find the resulting plot.")
+
+    except requests.RequestException as e:
+        print(f"An error occurred: {e}")
 
 
 def append_catalog_table_to_pipeline_table(
