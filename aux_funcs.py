@@ -3,11 +3,16 @@ import astropy.units as u
 import pandas as pd
 import numpy as np
 import requests
+import tqdm
 from astropy.io import fits
+from astropy.wcs import WCS
 from astropy.coordinates import Angle, SkyCoord
 from astroquery.gaia import Gaia
-from astroquery.mast import Catalogs
+from astroquery.mast import Catalogs, Observations
 from astropy.coordinates.name_resolve import NameResolveError
+from concurrent.futures import ThreadPoolExecutor
+from reproject.mosaicking import find_optimal_celestial_wcs, reproject_and_coadd
+from reproject import reproject_interp
 from bs4 import BeautifulSoup
 
 
@@ -328,9 +333,63 @@ def get_staralt_plots(
     observatory,
     coordinates,
     min_elevation,
+    output_dir,
     out_format='gif',
     filename='visibility_plot.gif'
 ):
+    """
+    Retrieve visibility/observability plots from the ING Staralt service.
+
+    This function automates a POST request to the Staralt server to generate 
+    and download plots (Staralt, Startrack, Starobs, or Starmult) for 
+    astronomical targets at a given date and observatory.
+
+    Parameters
+    ----------
+    mode : str
+        The Staralt mode to use. Options are:
+        - 'staralt': Standard altitude vs. time plot.
+        - 'startrack': Tracking plot for a specific night.
+        - 'starobs': Yearly observability plot.
+        - 'starmult': Visibility for multiple targets.
+
+    date : str
+        Observation date in 'YYYY-MM-DD' format.
+
+    observatory : str
+        The name of the observatory as expected by the Staralt form 
+        (e.g., 'Paranal', 'La Silla', 'Roque de los Muchachos').
+
+    coordinates : str
+        The target coordinates or object names in a format recognized 
+        by Staralt (e.g., 'HH MM SS +/-DD MM SS' or 'Object Name').
+
+    min_elevation : int or float
+        Minimum elevation/altitude in degrees to display in the plot 
+        (typically 10 or 30).
+    output_dir : str
+        Directory where the plot will be saved.
+    out_format : str, optional
+        The output file format requested from the server. Default is 'gif'. 
+        Other options typically include 'postscript'.
+
+    filename : str, optional
+        The local path and filename where the resulting plot will be saved. 
+        Default is 'visibility_plot.gif'.
+
+    Returns
+    -------
+    None
+        The function saves the plot directly to the local disk.
+
+    Notes
+    -----
+    This function requires the `requests` and `BeautifulSoup` (from `bs4`) 
+    libraries. It performs a POST request to the ING server and attempts 
+    to parse the resulting binary image data or the HTML response to 
+    find the image URL.
+    """
+
     url = "https://astro.ing.iac.es/staralt/index.php"
 
     # Mapping modes to the site's numerical values
@@ -343,52 +402,185 @@ def get_staralt_plots(
 
     year, month, day = date.split('-')
 
-    # UPDATED: Use the exact 'name' attributes from the HTML you provided
     form_data = {
         'form[mode]': mode_map.get(mode.lower(), '1'),
         'form[day]': day,
         'form[month]': month,
         'form[year]': year,
-        'form[obs_name]': observatory,  # Needs the full string from the dropdown
+        'form[obs_name]': observatory,
         'form[coordlist]': coordinates,
-        'form[paramdist]': '2',         # Default: Moon distance
-        'form[minangle]': min_elevation,         # Default: 10 degrees
+        'form[paramdist]': '2',
+        'form[minangle]': min_elevation,
         'form[format]': out_format,
         'action': 'showImage',
         'submit': ' Retrieve '
     }
 
+    # Ensure the output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, filename)
+
     print(f"Submitting request for {mode} at {observatory}...")
 
     try:
-        # We must use a POST request to index.php
         response = requests.post(url, data=form_data)
         response.raise_for_status()
 
         content_type = response.headers.get("Content-Type", "")
 
         if "image" in content_type:
-            # The server returned the GIF directly
-            with open(filename, "wb") as f:
+            with open(save_path, "wb") as f:
                 f.write(response.content)
-            print(f"Success! Image saved as {filename}")
+            print(f"Success! Image saved to {save_path}")
 
         else:
-            # Fallback: HTML page with <img>
             soup = BeautifulSoup(response.text, "html.parser")
             img_tag = soup.find("img", src=lambda s: s and "temp/" in s)
 
             if img_tag:
                 img_url = "https://astro.ing.iac.es/staralt/" + img_tag["src"]
                 img_data = requests.get(img_url).content
-                with open(filename, "wb") as f:
+                with open(save_path, "wb") as f:
                     f.write(img_data)
-                print(f"Success! Image saved as {filename}")
+                print(f"Success! Image saved to {save_path}")
             else:
-                print("Could not find the resulting plot.")
+                print("Could not find the resulting plot in the HTML response.")
 
     except requests.RequestException as e:
         print(f"An error occurred: {e}")
+
+
+def download_and_mosaic_hst_imaging(
+    cluster_name,
+    output_base_dir,
+    search_radius_arcmin=5.0,
+    filters="F606W",
+    instrument="ACS/WFC",
+    proceed_without_prompt=False,
+    max_threads=4
+):
+    """
+    Query, download, and mosaic HST skycell images for a given target.
+
+    This function resolves the target coordinates, searches the MAST archive 
+    for calibrated 'DRC' skycell products, downloads them using multi-threading, 
+    and creates a coadded mosaic if multiple files are retrieved.
+
+    Parameters
+    ----------
+    cluster_name : str
+        Name of the astronomical target to resolve via Sesame (e.g., 'NGC0288').
+    output_base_dir : str
+        The root directory where a subfolder for the cluster will be created.
+    search_radius_arcmin : float, optional
+        Radius for the MAST coordinate search in arcminutes. Default is 5.0.
+    filters : str, optional
+        HST filter to retrieve. Default is 'F606W'.
+    instrument : str, optional
+        HST instrument name. Default is 'ACS/WFC'.
+    proceed_without_prompt : bool, optional
+        If True, skips the manual confirmation of download size. Default is False.
+    max_threads : int, optional
+        Number of concurrent threads for downloading files. Default is 4.
+
+    Returns
+    -------
+    str
+        Path to the final FITS file (either the single DRC or the generated mosaic).
+
+    Notes
+    -----
+    Requires `reproject`, `tqdm`, and `astroquery` installed in the environment.
+    """
+
+    # 1. Resolve Coordinates
+    try:
+        coord = SkyCoord.from_name(cluster_name)
+    except Exception as e:
+        print(f"Could not resolve object name: {cluster_name}")
+        raise e
+
+    print(f"\nResolved {cluster_name} at RA={coord.ra.deg:.6f}, DEC={coord.dec.deg:.6f}")
+
+    # 2. Query HST Archive
+    obs_table = Observations.query_criteria(
+        coordinates=coord,
+        radius=search_radius_arcmin * u.arcmin,
+        filters=filters,
+        instrument_name=instrument,
+        calib_level=3
+    )
+
+    data_products = Observations.get_product_list(obs_table)
+    final_files = data_products[data_products['productSubGroupDescription'] == 'DRC']
+
+    # Cleaning and filtering
+    final_files = final_files.group_by('productFilename').groups.aggregate(lambda x: x[0])
+    final_files = final_files[['skycell' in fname.lower() for fname in final_files['productFilename']]]
+    final_files = final_files[(final_files['calib_level'] == 3) & (final_files['filters'] == filters)]
+
+    if len(final_files) == 0:
+        print(f"No matching skycell files found for {cluster_name}.")
+        return None
+
+    total_size_gb = sum(final_files['size']) / (1024**3)
+    print(f"Found {len(final_files)} skycell files ({total_size_gb:.2f} GB)")
+
+    # 3. Handle Download Confirmation
+    if not proceed_without_prompt:
+        confirm = input("\nProceed with download? [y/N]: ").strip().lower()
+        if confirm != 'y':
+            print("Download aborted.")
+            return None
+
+    download_dir = os.path.join(output_base_dir, f"HST_{cluster_name}_{filters}")
+    os.makedirs(download_dir, exist_ok=True)
+
+    # Internal helper for multi-threaded download
+    def _download_worker(uri):
+        url = f"https://mast.stsci.edu/api/v0.1/Download/file?uri={uri}"
+        filename = uri.split("/")[-1]
+        final_path = os.path.join(download_dir, filename)
+
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+
+        with open(final_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=16384):
+                f.write(chunk)
+        return final_path
+
+    uris = final_files['dataURI']
+    print(f"Downloading files to {download_dir}...")
+    with ThreadPoolExecutor(max_threads) as executor:
+        list(tqdm(executor.map(_download_worker, uris), total=len(uris), desc="Downloading"))
+
+    # 4. Mosaicking logic
+    drc_files = [os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith("_drc.fits")]
+
+    if len(drc_files) == 1:
+        print("Only one file found, no mosaic needed.")
+        return drc_files[0]
+
+    print(f"Creating mosaic from {len(drc_files)} files...")
+    images_wcs = []
+    for f in drc_files:
+        with fits.open(f) as hdul:
+            images_wcs.append((hdul['SCI'].data, WCS(hdul['SCI'].header)))
+
+    target_wcs, target_shape = find_optimal_celestial_wcs(images_wcs)
+    mosaic, _ = reproject_and_coadd(
+        images_wcs,
+        target_wcs,
+        shape_out=target_shape,
+        reproject_function=reproject_interp
+    )
+
+    output_path = os.path.join(download_dir, f'{cluster_name}_skycell_mosaic.fits')
+    fits.PrimaryHDU(data=mosaic, header=target_wcs.to_header()).writeto(output_path, overwrite=True)
+
+    print(f"Mosaic saved: {output_path}")
+    return output_path
 
 
 def append_catalog_table_to_pipeline_table(
